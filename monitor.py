@@ -42,7 +42,31 @@ def load(path):
 def save(path, data):
     open(path, "w").write(data)
 
+def check_start_command():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+    r = requests.get(url, timeout=10).json()
 
+    for item in r.get("result", []):
+        msg = item.get("message", {})
+        text = msg.get("text", "")
+        chat_id = msg.get("chat", {}).get("id")
+
+        if text == "/start":
+            send_telegram(
+                "🟢 BOT ONLINE\n\n"
+                f"URL: {URL}\n"
+                f"Waktu UTC: {datetime.utcnow()}\n"
+                "Status: berjalan normal"
+            )
+
+            # hapus update agar tidak dibalas ulang
+            offset = item["update_id"] + 1
+            requests.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
+                params={"offset": offset},
+                timeout=10
+            )
+            break
 # ========== SUMMARY 1 JAM ==========
 def hourly_summary(current_state, changes):
     hour = datetime.utcnow().strftime("%Y-%m-%d %H")
