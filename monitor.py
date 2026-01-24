@@ -8,8 +8,8 @@ URL = "https://pusatkode.com/081317155457"
 STATE_FILE = "last_state.txt"
 HEARTBEAT_FILE = "last_heartbeat.txt"
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+BOT_TOKEN = ("8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs")
+CHAT_ID = ("7530475008")
 
 
 def send_telegram(msg):
