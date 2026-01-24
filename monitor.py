@@ -1,82 +1,81 @@
 import requests
 import hashlib
 import os
-import difflib
 from datetime import datetime
-from playwright.sync_api import sync_playwright
 
 URL = "https://pusatkode.com/081317155457"
 
-STATE_FILE = "last_content.txt"
-SCREENSHOT = "screenshot.png"
+STATE_FILE = "last_state.txt"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 
-def send_telegram_text(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": text
-    }, timeout=10)
+def send_telegram(msg):
+    api = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(api, data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
 
 
-def send_telegram_photo(caption):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    with open(SCREENSHOT, "rb") as img:
-        requests.post(url, data={
-            "chat_id": CHAT_ID,
-            "caption": caption
-        }, files={"photo": img}, timeout=20)
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
-def take_screenshot():
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto(URL, timeout=30000)
-        page.screenshot(path=SCREENSHOT, full_page=True)
-        browser.close()
+def load_state():
+    if os.path.exists(STATE_FILE):
+        return open(STATE_FILE).read()
+    return None
+
+
+def save_state(state):
+    open(STATE_FILE, "w").write(state)
 
 
 def main():
-    response = requests.get(URL, timeout=15)
-    response.raise_for_status()
-    current = response.text.splitlines()
+    session = requests.Session()
 
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            old = f.read().splitlines()
-    else:
-        old = []
+    # === 1. REQUEST TANPA FOLLOW REDIRECT ===
+    r = session.get(URL, allow_redirects=False, timeout=20)
 
-    if old != current:
-        diff = difflib.unified_diff(
-            old, current,
-            fromfile="sebelum",
-            tofile="sesudah",
-            lineterm=""
-        )
+    status = r.status_code
+    location = r.headers.get("Location", "-")
+    content_type = r.headers.get("Content-Type", "-")
 
-        diff_text = "\n".join(list(diff)[:50])  # batasi agar tidak kepanjangan
+    # === 2. JIKA REDIRECT / DOWNLOAD ===
+    file_hash = "-"
+    file_size = "-"
 
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            f.write("\n".join(current))
+    if status in (301, 302, 303, 307, 308) and location:
+        download = session.get(location, timeout=30)
+        file_hash = sha256_bytes(download.content)
+        file_size = str(len(download.content))
 
-        take_screenshot()
+    # === 3. STATE DIGABUNG ===
+    current_state = (
+        f"STATUS={status}\n"
+        f"LOCATION={location}\n"
+        f"CONTENT_TYPE={content_type}\n"
+        f"FILE_HASH={file_hash}\n"
+        f"FILE_SIZE={file_size}"
+    )
+
+    last_state = load_state()
+
+    if last_state != current_state:
+        save_state(current_state)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         message = (
-            f"🔔 PERUBAHAN TERDETEKSI\n"
-            f"{URL}\n"
+            "🔔 PERUBAHAN TERDETEKSI\n\n"
+            f"URL: {URL}\n"
             f"Waktu: {now}\n\n"
-            f"Diff (potongan):\n"
-            f"{diff_text}"
+            f"HTTP Status: {status}\n"
+            f"Redirect: {location}\n"
+            f"Content-Type: {content_type}\n\n"
+            f"File SHA256:\n{file_hash}\n"
+            f"File Size: {file_size} bytes"
         )
 
-        send_telegram_text(message)
-        send_telegram_photo("Screenshot halaman terbaru")
+        send_telegram(message)
 
 
 if __name__ == "__main__":
