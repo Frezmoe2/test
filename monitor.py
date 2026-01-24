@@ -1,11 +1,12 @@
 import requests
 import hashlib
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 URL = "https://pusatkode.com/081317155457"
 
 STATE_FILE = "last_state.txt"
+HEARTBEAT_FILE = "last_heartbeat.txt"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -20,27 +21,38 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def load_state():
-    if os.path.exists(STATE_FILE):
-        return open(STATE_FILE).read()
+def load_file(path):
+    if os.path.exists(path):
+        return open(path).read()
     return None
 
 
-def save_state(state):
-    open(STATE_FILE, "w").write(state)
+def save_file(path, data):
+    open(path, "w").write(data)
+
+
+def heartbeat():
+    today = date.today().isoformat()
+    last = load_file(HEARTBEAT_FILE)
+
+    if last != today:
+        send_telegram(f"ℹ️ Monitor aktif\n{URL}\nTanggal: {today}")
+        save_file(HEARTBEAT_FILE, today)
 
 
 def main():
+    # === HEARTBEAT (1x per hari) ===
+    heartbeat()
+
     session = requests.Session()
 
-    # === 1. REQUEST TANPA FOLLOW REDIRECT ===
+    # === HTTP CHECK (NO REDIRECT) ===
     r = session.get(URL, allow_redirects=False, timeout=20)
 
     status = r.status_code
     location = r.headers.get("Location", "-")
     content_type = r.headers.get("Content-Type", "-")
 
-    # === 2. JIKA REDIRECT / DOWNLOAD ===
     file_hash = "-"
     file_size = "-"
 
@@ -49,7 +61,6 @@ def main():
         file_hash = sha256_bytes(download.content)
         file_size = str(len(download.content))
 
-    # === 3. STATE DIGABUNG ===
     current_state = (
         f"STATUS={status}\n"
         f"LOCATION={location}\n"
@@ -58,13 +69,13 @@ def main():
         f"FILE_SIZE={file_size}"
     )
 
-    last_state = load_state()
+    last_state = load_file(STATE_FILE)
 
     if last_state != current_state:
-        save_state(current_state)
+        save_file(STATE_FILE, current_state)
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        message = (
+        send_telegram(
             "🔔 PERUBAHAN TERDETEKSI\n\n"
             f"URL: {URL}\n"
             f"Waktu: {now}\n\n"
@@ -74,8 +85,6 @@ def main():
             f"File SHA256:\n{file_hash}\n"
             f"File Size: {file_size} bytes"
         )
-
-        send_telegram(message)
 
 
 if __name__ == "__main__":
