@@ -6,8 +6,8 @@ from datetime import datetime
 # ================== KONFIGURASI ==================
 URL = "https://pusatkode.com/081317155457"
 
-BOT_TOKEN = "ISI_BOT_TOKEN_KAMU"
-CHAT_ID = "ISI_CHAT_ID_KAMU"
+BOT_TOKEN = ("8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs") 
+CHAT_ID = ("7530475008")
 
 STATE_FILE = "last_state.txt"
 HEARTBEAT_FILE = "last_heartbeat_hour.txt"
