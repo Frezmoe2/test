@@ -67,6 +67,7 @@ def check_start_command():
                 timeout=10
             )
             break
+            
 # ========== SUMMARY 1 JAM ==========
 def hourly_summary(current_state, changes):
     hour = datetime.utcnow().strftime("%Y-%m-%d %H")
@@ -135,6 +136,7 @@ def guess_extension(headers, data: bytes) -> str:
 
 # ================== MAIN ==================
 def main():
+    check_start_command()
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
     s = requests.Session()
