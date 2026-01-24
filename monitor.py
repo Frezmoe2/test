@@ -3,17 +3,16 @@ import hashlib
 import os
 from datetime import datetime
 
-# ================== KONFIGURASI ==================
+# ================== KONFIG ==================
 URL = "https://pusatkode.com/081317155457"
 
 BOT_TOKEN = ("8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs") 
 CHAT_ID = ("7530475008")
 
 STATE_FILE = "last_state.txt"
-HEARTBEAT_FILE = "last_heartbeat_hour.txt"
+SUMMARY_FILE = "summary_hour.txt"
 DOWNLOAD_DIR = "downloads"
-
-# =================================================
+# ===========================================
 
 
 def send_telegram(text):
@@ -44,31 +43,39 @@ def save(path, data):
     open(path, "w").write(data)
 
 
-# ================== HEARTBEAT 1 JAM ==================
-def hourly_heartbeat():
-    hour = datetime.utcnow().strftime("%Y-%m-%d %H")  # UTC
-    last = load(HEARTBEAT_FILE)
+# ========== SUMMARY 1 JAM ==========
+def hourly_summary(current_state, changes):
+    hour = datetime.utcnow().strftime("%Y-%m-%d %H")
+    last = load(SUMMARY_FILE)
 
-    if last != hour:
-        send_telegram(
-            f"🟢 Monitor masih aktif\n"
-            f"URL: {URL}\n"
-            f"Jam (UTC): {hour}:00"
-        )
-        save(HEARTBEAT_FILE, hour)
+    if last == hour:
+        return  # sudah kirim summary jam ini
+
+    save(SUMMARY_FILE, hour)
+
+    send_telegram(
+        "📊 SUMMARY 1 JAM\n\n"
+        f"URL: {URL}\n"
+        f"Periode (UTC): {hour}:00 – {hour}:59\n\n"
+        f"Status HTTP: {current_state['status']}\n"
+        f"Redirect: {current_state['location']}\n"
+        f"Hash terakhir:\n{current_state['hash']}\n"
+        f"Ukuran: {current_state['size']} bytes\n\n"
+        f"Perubahan jam ini: {changes}\n"
+        f"Status sistem: {'🟡 Ada aktivitas' if changes > 0 else '🟢 Stabil'}"
+    )
 
 
-# ================== DETEKSI EKSTENSI ==================
+# ========== EKSTENSI ==========
 def guess_extension(headers, data: bytes) -> str:
     ct = headers.get("Content-Type", "").lower()
     head = data[:8192]
 
-    # --- Content-Type ---
-    if "text/html" in ct:
+    if "html" in ct:
         return ".html"
-    if "text/plain" in ct:
+    if "plain" in ct:
         return ".txt"
-    if "application/json" in ct:
+    if "json" in ct:
         return ".json"
     if "xml" in ct:
         return ".xml"
@@ -81,7 +88,6 @@ def guess_extension(headers, data: bytes) -> str:
     if "android.package-archive" in ct:
         return ".apk"
 
-    # --- Magic number ---
     if head.startswith(b"PK\x03\x04"):
         if b"AndroidManifest.xml" in head:
             return ".apk"
@@ -90,25 +96,12 @@ def guess_extension(headers, data: bytes) -> str:
         return ".pdf"
     if head.startswith(b"MZ"):
         return ".exe"
-    if head.startswith(b"\x7fELF"):
-        return ".elf"
-    if head.startswith(b"\x89PNG"):
-        return ".png"
-    if head.startswith(b"\xff\xd8\xff"):
-        return ".jpg"
-    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
-        return ".gif"
 
-    # --- Text heuristic ---
     try:
         text = data.decode("utf-8", errors="ignore")
-        printable = sum(c.isprintable() for c in text[:2000]) / max(len(text[:2000]), 1)
-        if printable > 0.9:
-            t = text.lstrip().lower()
-            if "<html" in t:
+        if sum(c.isprintable() for c in text[:2000]) / max(len(text[:2000]), 1) > 0.9:
+            if "<html" in text.lower():
                 return ".html"
-            if t.startswith("{") or t.startswith("["):
-                return ".json"
             return ".txt"
     except Exception:
         pass
@@ -118,7 +111,6 @@ def guess_extension(headers, data: bytes) -> str:
 
 # ================== MAIN ==================
 def main():
-    hourly_heartbeat()
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
     s = requests.Session()
@@ -130,6 +122,7 @@ def main():
 
     file_hash = "-"
     file_size = "-"
+    changes = 0
 
     last_state = load(STATE_FILE)
 
@@ -139,6 +132,7 @@ def main():
         file_size = str(len(d.content))
 
         if not last_state or f"FILE_HASH={file_hash}" not in last_state:
+            changes += 1
             ext = guess_extension(d.headers, d.content)
             ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             path = f"{DOWNLOAD_DIR}/{ts}_{file_hash[:8]}{ext}"
@@ -148,30 +142,32 @@ def main():
 
             size_mb = len(d.content) / (1024 * 1024)
             if size_mb <= 20:
-                send_file(
-                    path,
-                    f"📦 File berubah ({size_mb:.2f} MB)\nSHA256:\n{file_hash}"
-                )
+                send_file(path, f"📦 File berubah ({size_mb:.2f} MB)")
 
-    current_state = (
+    current_state = {
+        "status": status,
+        "location": location,
+        "hash": file_hash,
+        "size": file_size
+    }
+
+    state_text = (
         f"STATUS={status}\n"
         f"LOCATION={location}\n"
-        f"CONTENT_TYPE={content_type}\n"
         f"FILE_HASH={file_hash}\n"
         f"FILE_SIZE={file_size}"
     )
 
-    if last_state != current_state:
-        save(STATE_FILE, current_state)
+    if last_state != state_text:
+        save(STATE_FILE, state_text)
         send_telegram(
             "🔔 PERUBAHAN TERDETEKSI\n\n"
             f"URL: {URL}\n"
             f"Waktu UTC: {datetime.utcnow()}\n\n"
-            f"HTTP Status: {status}\n"
-            f"Redirect: {location}\n\n"
-            f"SHA256:\n{file_hash}\n"
-            f"Size: {file_size} bytes"
+            f"SHA256:\n{file_hash}"
         )
+
+    hourly_summary(current_state, changes)
 
 
 if __name__ == "__main__":
