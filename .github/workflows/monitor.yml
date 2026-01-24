@@ -21,3 +21,9 @@ jobs:
 
       - name: Run monitor
         run: python monitor.py
+
+      - name: Upload downloaded files
+        uses: actions/upload-artifact@v3
+        with:
+          name: downloaded-files
+          path: downloads/
