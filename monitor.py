@@ -11,7 +11,7 @@ URLS = {
 }
 
 # URL Workers kamu (hasil wrangler deploy)
-WORKER_UPDATE_URL = "https://telegram-bot.yourname.workers.dev/update"
+WORKER_UPDATE_URL = "https://telegram-bot.frezmoe.workers.dev"
 
 
 def sha256(data: bytes) -> str:
