@@ -14,43 +14,47 @@ URLS = {
 WORKER_UPDATE_URL = "https://telegram-bot.frezmoe.workers.dev"
 
 
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
+CHAT_ID = "7530475008"
 
+DOWNLOAD="downloads"
+os.makedirs(DOWNLOAD,exist_ok=True)
 
-def send_to_worker(payload):
-    requests.post(WORKER_UPDATE_URL, json=payload, timeout=15)
+def sha(x): return hashlib.sha256(x).hexdigest()
 
+def send_file(path):
+    with open(path,"rb") as f:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+            data={"chat_id":CHAT_ID},
+            files={"document":f}
+        )
 
 def main():
-    all_states = {}
+    data={}
+    for k,u in URLS.items():
+        r=requests.get(u,allow_redirects=False)
+        loc=r.headers.get("Location","-")
+        h="-";s="-"
 
-    for name, URL in URLS.items():
-        s = requests.Session()
-        r = s.get(URL, allow_redirects=False, timeout=20)
+        if loc!="-":
+            d=requests.get(loc)
+            h=sha(d.content);s=len(d.content)
 
-        status = r.status_code
-        location = r.headers.get("Location", "-")
+            fn=f"{DOWNLOAD}/{k}_{h[:8]}.bin"
+            open(fn,"wb").write(d.content)
 
-        file_hash = "-"
-        file_size = "-"
+            if s<20*1024*1024:
+                send_file(fn)
 
-        if status in (301, 302, 303, 307, 308) and location:
-            d = s.get(location, timeout=30)
-            file_hash = sha256(d.content)
-            file_size = str(len(d.content))
-
-        all_states[name] = {
-            "url": URL,
-            "http_status": status,
-            "redirect": location,
-            "hash": file_hash,
-            "size": file_size
+        data[k]={
+            "url":u,
+            "http_status":r.status_code,
+            "redirect":loc,
+            "hash":h,
+            "size":s
         }
 
-    # kirim SEMUA status ke Workers
-    send_to_worker(all_states)
+    requests.post(WORKER,json=data)
 
-
-if __name__ == "__main__":
-    main()
+main()
