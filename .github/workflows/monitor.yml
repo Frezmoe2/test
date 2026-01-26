@@ -1,4 +1,4 @@
-name: Website Monitor
+name: Multi URL Monitor
 
 on:
   schedule:
@@ -11,15 +11,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+
       - uses: actions/setup-python@v4
         with:
           python-version: "3.11"
-      - name: Install dependencies
+
+      - name: Install deps
         run: pip install requests
+
       - name: Run monitor
         run: python monitor.py
-      - name: Upload downloaded files
-        uses: actions/upload-artifact@v4
-        with:
-          name: downloaded-files
-          path: downloads/
