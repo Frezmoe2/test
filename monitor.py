@@ -10,7 +10,7 @@ URLS = {
 }
 
 # URL Workers kamu (hasil wrangler deploy)
-WORKER_UPDATE_URL = "https://telegram-bot.frezmoe.workers.dev"
+WORKER = "https://telegram-bot.frezmoe.workers.dev"
 
 
 BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
