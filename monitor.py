@@ -1,5 +1,4 @@
-import requests
-import hashlib
+import requests, hashlib, os
 
 # ====== DAFTAR URL (PAKAI ID BEBAS) ======
 URLS = {
