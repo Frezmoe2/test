@@ -4,6 +4,7 @@ import hashlib
 # ====== DAFTAR URL (PAKAI ID BEBAS) ======
 URLS = {
     "kode1": "https://pusatkode.com/081317155457",
+    "kode2": "https://pusatkode.com/B6yadxhk.png",
     # tambah kalau perlu:
     # "fileA": "https://example.com/a.zip",
     # "fileB": "https://example.com/b.apk",
