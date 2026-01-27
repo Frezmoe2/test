@@ -18,6 +18,17 @@ app = Flask(__name__)
 def home():
     return "OK"
 
+# ================= CONFIG =================
+
+URLS = [
+    "https://pusatkode.com/081317155457",
+    "https://pusatkode.com/B6yadxhk.png"
+]
+
+STATE_DIR = "state"
+DOWNLOAD_DIR = "downloads"
+MAX_FILE = 45 * 1024 * 1024
+
 MIME_MAP = {
     "text/html": ".html",
     "text/plain": ".txt",
@@ -32,179 +43,117 @@ MIME_MAP = {
     "video/quicktime": ".mov",
 }
 
-URLS = [
-    "https://pusatkode.com/081317155457",
-    "https://pusatkode.com/B6yadxhk.png"
-]
-
-STATE_DIR = "state"
-DOWNLOAD_DIR = "downloads"
-
 os.makedirs(STATE_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-MAX_FILE = 45 * 1024 * 1024
 
 last_scan = datetime.now(timezone.utc)
 last_update_id = 0
 
+# ================= HELPERS =================
 
 def now():
     return datetime.now(timezone.utc)
 
-
 def tg(msg):
     requests.post(f"{TG}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
 
-
 def tg_file(path):
     if os.path.getsize(path) > MAX_FILE:
-        tg("⚠️ File terlalu besar, tidak dikirim.")
+        tg("⚠️ File terlalu besar")
         return
     with open(path, "rb") as f:
-        requests.post(
-            f"{TG}/sendDocument",
+        requests.post(f"{TG}/sendDocument",
             data={"chat_id": CHAT_ID},
             files={"document": f}
         )
 
-
 def sha(data):
     return hashlib.sha256(data).hexdigest()
-
 
 def state_path(k):
     return f"{STATE_DIR}/{hashlib.md5(k.encode()).hexdigest()}.txt"
 
-
 def load_state(k):
-    p = state_path(k)
-    if os.path.exists(p):
-        return open(p).read().strip()
+    if os.path.exists(state_path(k)):
+        return open(state_path(k)).read()
     return ""
 
+def save_state(k,v):
+    open(state_path(k),"w").write(v)
 
-def save_state(k, v):
-    open(state_path(k), "w").write(v)
+def ext_from_response(r):
+    p = r.url.split("?")[0]
+    e = os.path.splitext(p)[1]
+    if e: return e
+    ct = r.headers.get("Content-Type","").split(";")[0]
+    if ct in MIME_MAP: return MIME_MAP[ct]
+    g = mimetypes.guess_extension(ct)
+    return g if g else ".bin"
 
-
-def ext_from_response(resp):
-    path = resp.url.split("?")[0]
-    url_ext = os.path.splitext(path)[1]
-    if url_ext:
-        return url_ext
-
-    ctype = resp.headers.get("Content-Type", "").split(";")[0]
-    if ctype in MIME_MAP:
-        return MIME_MAP[ctype]
-
-    guess = mimetypes.guess_extension(ctype)
-    if guess:
-        return guess
-
-    return ".bin"
-
+# ================= CORE =================
 
 def scan_url(url, force=False):
-    r = requests.get(url, allow_redirects=True, timeout=60)
+    r = requests.get(url,timeout=60,allow_redirects=True)
     data = r.content
-
     h = sha(data)
     old = load_state(url)
 
-    changed = force or (h != old)
-
-    if changed:
-        save_state(url, h)
-
+    if force or h!=old:
+        save_state(url,h)
         ext = ext_from_response(r)
-        name = f"{DOWNLOAD_DIR}/{now().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext}"
-        open(name, "wb").write(data)
+        name=f"{DOWNLOAD_DIR}/{now().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext}"
+        open(name,"wb").write(data)
 
-        msg = (
-            "🔔 PERUBAHAN TERDETEKSI\n\n"
-            f"URL: {url}\n"
-            f"HTTP: {r.status_code}\n"
-            f"Redirect: {r.url}\n"
-            f"Content-Type: {r.headers.get('Content-Type','-')}\n\n"
-            f"SHA256:\n{h}\n"
-            f"Size: {len(data)} bytes"
+        tg(
+            f"🔔 UPDATE\n{url}\nHTTP:{r.status_code}\nSHA:{h}\nSize:{len(data)}"
         )
-
-        tg(msg)
         tg_file(name)
-
-    return {
-        "url": url,
-        "status": r.status_code,
-        "hash": h[:12],
-        "size": len(data),
-        "changed": changed
-    }
-
+        return True
+    return False
 
 def scan_all(force=False):
     global last_scan
-    results = []
-    any_change = False
-
+    changed=False
     for u in URLS:
-        res = scan_url(u, force)
-        results.append(res)
-        if res["changed"]:
-            any_change = True
-
-    last_scan = now()
-    return any_change, results
-
+        if scan_url(u,force):
+            changed=True
+    last_scan=now()
+    return changed
 
 def poll_commands():
     global last_update_id
+    r=requests.get(f"{TG}/getUpdates",
+        params={"offset":last_update_id+1,"timeout":1}).json()
 
-    r = requests.get(
-        f"{TG}/getUpdates",
-        params={"offset": last_update_id + 1, "timeout": 1}
-    ).json()
+    for u in r.get("result",[]):
+        last_update_id=u["update_id"]
+        t=u["message"]["text"]
 
-    for u in r.get("result", []):
-        last_update_id = u["update_id"]
-        text = u.get("message", {}).get("text", "")
+        if t=="/health":
+            m=int((now()-last_scan).total_seconds()/60)
+            tg(f"🩺 Last scan {m} menit")
 
-        if text == "/health":
-            diff = int((now() - last_scan).total_seconds() / 60)
-            tg(f"🩺 HEALTH\nTerakhir scan: {diff} menit lalu\nTotal URL: {len(URLS)}")
+        elif t=="/cekperubahan":
+            tg("Manual scan...")
+            scan_all(True)
 
-        elif text == "/cekperubahan":
-            tg("🔄 Scan manual dimulai...")
-            scan_all(force=True)
-            tg("✅ Scan manual selesai")
-
-        elif text == "/status":
-            _, res = scan_all(force=False)
-            msg = "📊 STATUS\n\n"
-            for r2 in res:
-                msg += (
-                    f"{r2['url']}\n"
-                    f"HTTP: {r2['status']}\n"
-                    f"SHA: {r2['hash']}...\n"
-                    f"Size: {r2['size']} bytes\n\n"
-                )
-            tg(msg)
-
+        elif t=="/status":
+            tg("Bot aktif")
 
 def bot_loop():
     tg("🟢 BOT ONLINE")
-
     while True:
         try:
             poll_commands()
-            changed, _ = scan_all()
-            time.sleep(60 if changed else 600)
-
+            c=scan_all()
+            time.sleep(60 if c else 600)
         except Exception as e:
-            tg("❌ ERROR:\n" + str(e))
+            tg(str(e))
             time.sleep(60)
 
-Thread(target=bot_loop, daemon=True).start()
+# ================= START =================
 
-app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+Thread(target=bot_loop,daemon=True).start()
+
+if __name__=="__main__":
+    app.run(host="0.0.0.0",port=int(os.environ.get("PORT",8080)))
