@@ -2,7 +2,7 @@ import requests
 import hashlib
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import mimetypes
 
 BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
@@ -37,8 +37,12 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 MAX_FILE = 45 * 1024 * 1024
 
-last_scan = datetime.utcnow()
+last_scan = datetime.now(timezone.utc)
 last_update_id = 0
+
+
+def now():
+    return datetime.now(timezone.utc)
 
 
 def tg(msg):
@@ -50,9 +54,11 @@ def tg_file(path):
         tg("⚠️ File terlalu besar, tidak dikirim.")
         return
     with open(path, "rb") as f:
-        requests.post(f"{TG}/sendDocument",
-                      data={"chat_id": CHAT_ID},
-                      files={"document": f})
+        requests.post(
+            f"{TG}/sendDocument",
+            data={"chat_id": CHAT_ID},
+            files={"document": f}
+        )
 
 
 def sha(data):
@@ -104,7 +110,7 @@ def scan_url(url, force=False):
         save_state(url, h)
 
         ext = ext_from_response(r)
-        name = f"{DOWNLOAD_DIR}/{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext}"
+        name = f"{DOWNLOAD_DIR}/{now().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext}"
         open(name, "wb").write(data)
 
         msg = (
@@ -140,29 +146,32 @@ def scan_all(force=False):
         if res["changed"]:
             any_change = True
 
-    last_scan = datetime.utcnow()
+    last_scan = now()
     return any_change, results
 
 
 def poll_commands():
     global last_update_id
-    r = requests.get(f"{TG}/getUpdates",
-                     params={"offset": last_update_id + 1, "timeout": 1}).json()
+
+    r = requests.get(
+        f"{TG}/getUpdates",
+        params={"offset": last_update_id + 1, "timeout": 1}
+    ).json()
 
     for u in r.get("result", []):
         last_update_id = u["update_id"]
         text = u.get("message", {}).get("text", "")
 
         if text == "/health":
-            diff = int((datetime.utcnow() - last_scan).total_seconds() / 60)
+            diff = int((now() - last_scan).total_seconds() / 60)
             tg(f"🩺 HEALTH\nTerakhir scan: {diff} menit lalu\nTotal URL: {len(URLS)}")
 
-        if text == "/cekperubahan":
+        elif text == "/cekperubahan":
             tg("🔄 Scan manual dimulai...")
             scan_all(force=True)
             tg("✅ Scan manual selesai")
 
-        if text == "/status":
+        elif text == "/status":
             _, res = scan_all(force=False)
             msg = "📊 STATUS\n\n"
             for r2 in res:
@@ -181,7 +190,6 @@ while True:
     try:
         poll_commands()
         changed, _ = scan_all()
-
         time.sleep(60 if changed else 600)
 
     except Exception as e:
