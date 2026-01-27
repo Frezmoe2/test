@@ -18,11 +18,6 @@ app = Flask(__name__)
 def home():
     return "OK"
 
-def run_web():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
-Thread(target=run_web, daemon=True).start()
-
 MIME_MAP = {
     "text/html": ".html",
     "text/plain": ".txt",
