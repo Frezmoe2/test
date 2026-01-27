@@ -197,14 +197,19 @@ def poll_commands():
             tg(msg)
 
 
-tg("🟢 BOT ONLINE")
+def bot_loop():
+    tg("🟢 BOT ONLINE")
 
-while True:
-    try:
-        poll_commands()
-        changed, _ = scan_all()
-        time.sleep(60 if changed else 600)
+    while True:
+        try:
+            poll_commands()
+            changed, _ = scan_all()
+            time.sleep(60 if changed else 600)
 
-    except Exception as e:
-        tg("❌ ERROR:\n" + str(e))
-        time.sleep(60)
+        except Exception as e:
+            tg("❌ ERROR:\n" + str(e))
+            time.sleep(60)
+
+Thread(target=bot_loop, daemon=True).start()
+
+app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
