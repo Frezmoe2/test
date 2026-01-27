@@ -8,6 +8,8 @@ import mimetypes
 BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
 CHAT_ID = "7530475008"
 
+TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
 MIME_MAP = {
     "text/html": ".html",
     "text/plain": ".txt",
@@ -33,27 +35,24 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(STATE_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-MAX_FILE = 45 * 1024 * 1024  # 45MB telegram safe
+MAX_FILE = 45 * 1024 * 1024
+
+last_scan = datetime.utcnow()
+last_update_id = 0
 
 
 def tg(msg):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": msg}
-    )
+    requests.post(f"{TG}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
 
 
 def tg_file(path):
     if os.path.getsize(path) > MAX_FILE:
         tg("⚠️ File terlalu besar, tidak dikirim.")
         return
-
     with open(path, "rb") as f:
-        requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-            data={"chat_id": CHAT_ID},
-            files={"document": f}
-        )
+        requests.post(f"{TG}/sendDocument",
+                      data={"chat_id": CHAT_ID},
+                      files={"document": f})
 
 
 def sha(data):
@@ -92,19 +91,16 @@ def ext_from_response(resp):
     return ".bin"
 
 
-def in_fast_window():
-    now = datetime.utcnow() + timedelta(hours=7)  # WIB
-    return now.hour == 20 and 40 <= now.minute <= 50
-
-
-def check(url):
+def scan_url(url, force=False):
     r = requests.get(url, allow_redirects=True, timeout=60)
     data = r.content
 
     h = sha(data)
     old = load_state(url)
 
-    if h != old:
+    changed = force or (h != old)
+
+    if changed:
         save_state(url, h)
 
         ext = ext_from_response(r)
@@ -114,31 +110,80 @@ def check(url):
         msg = (
             "🔔 PERUBAHAN TERDETEKSI\n\n"
             f"URL: {url}\n"
-            f"Waktu UTC: {datetime.utcnow().isoformat()}\n\n"
-            f"HTTP Status: {r.status_code}\n"
+            f"HTTP: {r.status_code}\n"
             f"Redirect: {r.url}\n"
             f"Content-Type: {r.headers.get('Content-Type','-')}\n\n"
             f"SHA256:\n{h}\n"
-            f"Ukuran: {len(data)} bytes"
+            f"Size: {len(data)} bytes"
         )
 
         tg(msg)
         tg_file(name)
-        return True
 
-    return False
+    return {
+        "url": url,
+        "status": r.status_code,
+        "hash": h[:12],
+        "size": len(data),
+        "changed": changed
+    }
+
+
+def scan_all(force=False):
+    global last_scan
+    results = []
+    any_change = False
+
+    for u in URLS:
+        res = scan_url(u, force)
+        results.append(res)
+        if res["changed"]:
+            any_change = True
+
+    last_scan = datetime.utcnow()
+    return any_change, results
+
+
+def poll_commands():
+    global last_update_id
+    r = requests.get(f"{TG}/getUpdates",
+                     params={"offset": last_update_id + 1, "timeout": 1}).json()
+
+    for u in r.get("result", []):
+        last_update_id = u["update_id"]
+        text = u.get("message", {}).get("text", "")
+
+        if text == "/health":
+            diff = int((datetime.utcnow() - last_scan).total_seconds() / 60)
+            tg(f"🩺 HEALTH\nTerakhir scan: {diff} menit lalu\nTotal URL: {len(URLS)}")
+
+        if text == "/cekperubahan":
+            tg("🔄 Scan manual dimulai...")
+            scan_all(force=True)
+            tg("✅ Scan manual selesai")
+
+        if text == "/status":
+            _, res = scan_all(force=False)
+            msg = "📊 STATUS\n\n"
+            for r2 in res:
+                msg += (
+                    f"{r2['url']}\n"
+                    f"HTTP: {r2['status']}\n"
+                    f"SHA: {r2['hash']}...\n"
+                    f"Size: {r2['size']} bytes\n\n"
+                )
+            tg(msg)
 
 
 tg("🟢 BOT ONLINE")
 
 while True:
-    changed = False
+    try:
+        poll_commands()
+        changed, _ = scan_all()
 
-    for u in URLS:
-        try:
-            if check(u):
-                changed = True
-        except Exception as e:
-            tg("❌ Error:\n" + str(e))
+        time.sleep(60 if changed else 600)
 
-    time.sleep(60 if changed else 600)
+    except Exception as e:
+        tg("❌ ERROR:\n" + str(e))
+        time.sleep(60)
