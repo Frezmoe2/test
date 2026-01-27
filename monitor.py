@@ -4,11 +4,24 @@ import os
 import time
 from datetime import datetime, timezone
 import mimetypes
+from threading import Thread
+from flask import Flask
 
 BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
 CHAT_ID = "7530475008"
 
 TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "OK"
+
+def run_web():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+Thread(target=run_web, daemon=True).start()
 
 MIME_MAP = {
     "text/html": ".html",
