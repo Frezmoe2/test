@@ -1,38 +1,23 @@
 import requests
 import hashlib
 import os
-import time
 from datetime import datetime, timezone
 import mimetypes
-from flask import Flask
-import threading
+from flask import Flask, request
 
 BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
 CHAT_ID = "7530475008"
-
 
 TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "OK"
-
-# ================= CONFIG =================
-
 MIME_MAP = {
-    "text/html": ".html",
-    "text/plain": ".txt",
-    "application/pdf": ".pdf",
-    "application/zip": ".zip",
-    "application/x-zip-compressed": ".zip",
-    "application/vnd.android.package-archive": ".apk",
     "image/png": ".png",
     "image/jpeg": ".jpg",
-    "image/webp": ".webp",
     "video/mp4": ".mp4",
     "video/quicktime": ".mov",
+    "text/html": ".html",
 }
 
 URLS = [
@@ -40,130 +25,100 @@ URLS = [
     "https://pusatkode.com/B6yadxhk.png"
 ]
 
-STATE_DIR = "state"
-DOWNLOAD_DIR = "downloads"
-
-os.makedirs(STATE_DIR, exist_ok=True)
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-MAX_FILE = 45 * 1024 * 1024
-
-last_scan = datetime.now(timezone.utc)
-last_update_id = 0
-
-# ========================================
+STATE_DIR="state"
+DOWNLOAD="downloads"
+os.makedirs(DOWNLOAD,exist_ok=True)
+os.makedirs(STATE_DIR,exist_ok=True)
 
 def now():
     return datetime.now(timezone.utc)
 
+def sha(x):
+    return hashlib.sha256(x).hexdigest()
+
+def key(u):
+    return hashlib.md5(u.encode()).hexdigest()
+
+def state_path(u):
+    return f"{STATE_DIR}/{key(u)}"
+
+def load(u):
+    return open(state_path(u)).read() if os.path.exists(state_path(u)) else ""
+
+def save(u,v):
+    open(state_path(u),"w").write(v)
+
 def tg(msg):
-    requests.post(f"{TG}/sendMessage", data={"chat_id": CHAT_ID, "text": msg})
+    requests.post(f"{TG}/sendMessage",json={
+        "chat_id":CHAT_ID,
+        "text":msg
+    })
 
 def tg_file(path):
-    if os.path.getsize(path) > MAX_FILE:
-        tg("⚠️ File terlalu besar.")
-        return
-    with open(path, "rb") as f:
+    with open(path,"rb") as f:
         requests.post(
             f"{TG}/sendDocument",
-            data={"chat_id": CHAT_ID},
-            files={"document": f}
+            data={"chat_id":CHAT_ID},
+            files={"document":f}
         )
 
-def sha(data):
-    return hashlib.sha256(data).hexdigest()
+def ext(r):
+    p=r.url.split("?")[0]
+    if os.path.splitext(p)[1]:
+        return os.path.splitext(p)[1]
+    ct=r.headers.get("Content-Type","").split(";")[0]
+    return MIME_MAP.get(ct,mimetypes.guess_extension(ct) or ".bin")
 
-def state_path(k):
-    return f"{STATE_DIR}/{hashlib.md5(k.encode()).hexdigest()}.txt"
-
-def load_state(k):
-    p = state_path(k)
-    return open(p).read().strip() if os.path.exists(p) else ""
-
-def save_state(k, v):
-    open(state_path(k), "w").write(v)
-
-def ext_from_response(resp):
-    path = resp.url.split("?")[0]
-    if os.path.splitext(path)[1]:
-        return os.path.splitext(path)[1]
-
-    ctype = resp.headers.get("Content-Type","").split(";")[0]
-    if ctype in MIME_MAP:
-        return MIME_MAP[ctype]
-
-    return mimetypes.guess_extension(ctype) or ".bin"
-
-def scan_url(url, force=False):
-    r = requests.get(url, timeout=60)
-    data = r.content
-    h = sha(data)
-    old = load_state(url)
-
-    changed = force or h != old
-
-    if changed:
-        save_state(url, h)
-
-        name = f"{DOWNLOAD_DIR}/{now().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext_from_response(r)}"
-        open(name,"wb").write(data)
-
-        tg(
-            f"🔔 PERUBAHAN\n\n{url}\n"
-            f"HTTP {r.status_code}\n"
-            f"SHA {h[:12]}"
-        )
-        tg_file(name)
-
-    return changed
-
-def scan_all(force=False):
-    global last_scan
-    changed = False
+def scan(force=False):
     for u in URLS:
-        if scan_url(u, force):
-            changed = True
-    last_scan = now()
-    return changed
+        r=requests.get(u,allow_redirects=True,timeout=60)
 
-def poll_commands():
-    global last_update_id
+        combo = (r.url + r.content.hex()).encode()
+        h=sha(combo)
 
-    r = requests.get(
-        f"{TG}/getUpdates",
-        params={"offset": last_update_id + 1, "timeout": 1}
-    ).json()
+        old=load(u)
 
-    for u in r.get("result", []):
-        last_update_id = u["update_id"]
-        text = u.get("message",{}).get("text","")
+        if force or h!=old:
+            save(u,h)
 
-        if text == "/health":
-            diff = int((now()-last_scan).total_seconds()/60)
-            tg(f"🩺 OK\nLast scan {diff} menit")
+            name=f"{DOWNLOAD}/{now().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext(r)}"
+            open(name,"wb").write(r.content)
 
-        elif text == "/status":
-            tg("🟢 BOT AKTIF")
+            tg(
+                f"🔔 PERUBAHAN\n\n"
+                f"{u}\n"
+                f"Final: {r.url}\n"
+                f"HTTP: {r.status_code}\n"
+                f"SHA: {h[:12]}"
+            )
+            tg_file(name)
 
-        elif text == "/cekperubahan":
-            tg("🔄 Scan manual")
-            scan_all(True)
-            tg("✅ Selesai")
+@app.route("/")
+def home():
+    return "OK"
 
-def worker():
-    tg("🟢 BOT ONLINE")
+@app.route("/webhook",methods=["POST"])
+def hook():
+    text=request.json.get("message",{}).get("text","")
 
-    while True:
-        try:
-            poll_commands()
-            changed = scan_all()
-            time.sleep(60 if changed else 600)
-        except Exception as e:
-            tg(str(e))
-            time.sleep(60)
+    if text=="/health":
+        tg("🩺 BOT HIDUP")
 
-# START BACKGROUND LOOP
-threading.Thread(target=worker, daemon=False).start()
+    elif text=="/status":
+        tg("🟢 AKTIF")
 
-# START WEB
-app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)))
+    elif text=="/cekperubahan":
+        tg("🔄 Scan...")
+        scan(True)
+        tg("✅ Selesai")
+
+    return "ok"
+
+@app.route("/autoscan")
+def autoscan():
+    scan(False)
+    return "autoscan ok"
+
+if __name__=="__main__":
+    scan(True)
+    app.run(host="0.0.0.0",port=int(os.environ.get("PORT",8080)))
