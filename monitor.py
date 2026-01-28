@@ -2,8 +2,8 @@ import requests
 import hashlib
 import os
 from datetime import datetime, timezone
-import mimetypes
 from flask import Flask, request
+import json
 
 BOT_TOKEN = "8120207053:AAHq_RmqaWznQyG6E6b6U-DF89r8-IdAjcs"
 CHAT_ID = "7530475008"
@@ -12,46 +12,45 @@ TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
 
-MIME_MAP = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "video/mp4": ".mp4",
-    "video/quicktime": ".mov",
-    "text/html": ".html",
-}
-
 URLS = [
     "https://pusatkode.com/081317155457",
     "https://pusatkode.com/B6yadxhk.png"
 ]
 
-STATE_DIR="state"
-DOWNLOAD="downloads"
-os.makedirs(DOWNLOAD,exist_ok=True)
-os.makedirs(STATE_DIR,exist_ok=True)
+DATA_DIR = "data"
+DOWNLOAD = "downloads"
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(DOWNLOAD, exist_ok=True)
+
+STATE_FILE = f"{DATA_DIR}/state.json"
+HISTORY_FILE = f"{DATA_DIR}/history.json"
+
+# ================= STORAGE =================
+
+def load_json(p):
+    if os.path.exists(p):
+        return json.load(open(p))
+    return {}
+
+def save_json(p, d):
+    json.dump(d, open(p,"w"), indent=2)
+
+STATE = load_json(STATE_FILE)
+HISTORY = load_json(HISTORY_FILE)
+
+# ================= UTILS =================
 
 def now():
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).isoformat()
 
-def sha(x):
+def sha256(x):
     return hashlib.sha256(x).hexdigest()
 
-def key(u):
-    return hashlib.md5(u.encode()).hexdigest()
-
-def state_path(u):
-    return f"{STATE_DIR}/{key(u)}"
-
-def load(u):
-    return open(state_path(u)).read() if os.path.exists(state_path(u)) else ""
-
-def save(u,v):
-    open(state_path(u),"w").write(v)
-
 def tg(msg):
-    requests.post(f"{TG}/sendMessage",json={
-        "chat_id":CHAT_ID,
-        "text":msg
+    requests.post(f"{TG}/sendMessage", json={
+        "chat_id": CHAT_ID,
+        "text": msg
     })
 
 def tg_file(path):
@@ -62,62 +61,122 @@ def tg_file(path):
             files={"document":f}
         )
 
-def ext(r):
-    p=r.url.split("?")[0]
-    if os.path.splitext(p)[1]:
-        return os.path.splitext(p)[1]
-    ct=r.headers.get("Content-Type","").split(";")[0]
-    return MIME_MAP.get(ct,mimetypes.guess_extension(ct) or ".bin")
+def ext(resp):
+    p = resp.url.split("?")[0]
+    e = os.path.splitext(p)[1]
+    if e:
+        return e
+
+    ct = resp.headers.get("Content-Type","").split(";")[0]
+
+    MAP = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "text/html": ".html",
+        "application/pdf": ".pdf",
+        "video/mp4": ".mp4",
+        "video/quicktime": ".mov"
+    }
+
+    return MAP.get(ct, ".bin")
+
+# ================= CORE =================
 
 def scan(force=False):
-    for u in URLS:
-        r=requests.get(u,allow_redirects=True,timeout=60)
+    global STATE,HISTORY
 
-        combo = (r.url + r.content.hex()).encode()
-        h=sha(combo)
+    for url in URLS:
+        r = requests.get(url, allow_redirects=True, timeout=60)
+        data = r.content
 
-        old=load(u)
+        sha = sha256(data)
+        size = len(data)
+        final = r.url
 
-        if force or h!=old:
-            save(u,h)
+        prev = STATE.get(url,{})
 
-            name=f"{DOWNLOAD}/{now().strftime('%Y%m%d_%H%M%S')}_{h[:8]}{ext(r)}"
-            open(name,"wb").write(r.content)
+        changed = (
+            force or
+            prev.get("sha") != sha or
+            prev.get("size") != size
+        )
 
-            tg(
-                f"🔔 PERUBAHAN\n\n"
-                f"{u}\n"
-                f"Final: {r.url}\n"
-                f"HTTP: {r.status_code}\n"
-                f"SHA: {h[:12]}"
-            )
-            tg_file(name)
+        if not changed:
+            continue
 
-@app.route("/")
-def home():
-    return "OK"
+        # save file
+        name = f"{DOWNLOAD}/{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{sha[:8]}{ext(r)}"
+        open(name,"wb").write(data)
+
+        # update state
+        STATE[url]={
+            "sha":sha,
+            "size":size,
+            "final":final,
+            "last_change":now()
+        }
+
+        # history
+        HISTORY.setdefault(url,[]).append({
+            "time":now(),
+            "sha":sha,
+            "size":size,
+            "final":final
+        })
+
+        save_json(STATE_FILE,STATE)
+        save_json(HISTORY_FILE,HISTORY)
+
+        tg(
+            "🔔 PERUBAHAN TERDETEKSI\n\n"
+            f"URL: {url}\n"
+            f"Final: {final}\n"
+            f"SHA256:\n{sha}\n"
+            f"Size: {size} bytes"
+        )
+
+        tg_file(name)
+
+# ================= TELEGRAM =================
 
 @app.route("/webhook",methods=["POST"])
 def hook():
     text=request.json.get("message",{}).get("text","")
 
     if text=="/health":
-        tg("🩺 BOT HIDUP")
+        tg("🟢 BOT AKTIF")
 
     elif text=="/status":
-        tg("🟢 AKTIF")
+        msg="📊 STATUS\n\n"
+        for u,v in STATE.items():
+            msg+=f"{u}\nSHA:{v['sha'][:12]}...\nSize:{v['size']}\n\n"
+        tg(msg or "Belum ada data")
+
+    elif text=="/history":
+        msg="📜 HISTORY\n\n"
+        for u,h in HISTORY.items():
+            msg+=f"{u}\nTotal perubahan: {len(h)}\n\n"
+        tg(msg)
 
     elif text=="/cekperubahan":
-        tg("🔄 Scan...")
+        tg("🔄 Scan manual...")
         scan(True)
         tg("✅ Selesai")
 
     return "ok"
 
+# ================= HTTP =================
+
+@app.route("/")
+def home():
+    return "OK"
+
 @app.route("/autoscan")
 def autoscan():
     scan(False)
     return "autoscan ok"
+
+# ================= START =================
 
 if __name__=="__main__":
     scan(True)
